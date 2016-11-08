@@ -1,0 +1,269 @@
+---
+title: "The Dublin mess"
+author: "Duc-Quang Nguyen"
+date: "25 Oct 2016"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    theme: simplex
+---
+
+```{r, message = F, include = F, warning = F}
+library(eurostat)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(countrycode)
+library(ggplot2)
+library(scales)
+library(swiTheme)
+```
+
+## Get Data
+### Eurostat data via API
+```{r getData, include = F}
+
+downloadData <- F
+saveMergedData <- "input/"
+
+
+tables <- c('migr_asyappctza', 'migr_dubro', 'migr_dubri', 'migr_dubdi', 'migr_dubto', "migr_dubredaco", 'migr_dubdo', 'migr_dubdedaco')
+names(tables) <- c(
+  "data/asylumYearly.csv", "data/dublinOutR.csv",  "data/dublinInR.csv", "data/decisionDublinIn.csv", "data/dublinOutT.csv", 
+  "data/dublinOutREurodac", "data/decisionDublinOut.csv", "data/dublinOutEurodacDecision")
+
+if(downloadData) {
+  # warning the data to download is very large over 1 Gb !
+  getData <- function(dataID) {
+  cat("\n", dataID)
+   dat <- get_eurostat(dataID, time_format = "date", cache = F)
+  }
+  data.dl <- lapply(tables, getData)
+  
+  # get yearly asylum applications
+  asyl <- data.dl[[1]] %>% filter(sex == "T", age == "TOTAL", asyl_app == "ASY_APP") %>% 
+    select(one_of(c("citizen", "geo", "time", "values")))
+  write.csv(asyl, file = names(tables)[1], row.names = F)
+  
+  # get yearly Dublin outgoing requests
+  outr <- data.dl[[2]] %>% filter(request == "REQ", leg_prov == "TOTAL") %>%
+    select(one_of(c("partner", "geo", "time", "values")))
+  write.csv(outr, file = names(tables)[2], row.names = F)
+ 
+  # get yearly Dublin incoming requests
+  inr <- data.dl[[3]] %>% filter(request == "REQ", leg_prov == "TOTAL") %>%
+    select(one_of(c("partner", "geo", "time", "values")))
+  write.csv(inr, file = names(tables)[3], row.names = F)
+  
+  # get yearly Dublin incoming requests' decisions
+  inrd <- data.dl[[4]] %>%  filter(request == "REQ", leg_prov == "TOTAL") %>%
+    select(one_of(c("partner", "geo", "time", "values", "decision")))
+  write.csv(inrd, file = names(tables)[4], row.names = F)
+  
+  # get yearly Dublin outgoing transfers
+  outt <- data.dl[[5]] %>% filter( leg_prov == "TOTAL", duration == "TOTAL") %>%
+    select(one_of(c("partner", "geo", "time", "values")))
+  write.csv(outt, file = names(tables)[5], row.names = F) 
+  
+  # get yearly Dublin outgoing EURODAC requests 
+  outreu <- data.dl[[6]] %>% filter(request == "REQ", leg_prov == "EDAC") %>%
+    select(one_of(c("partner", "geo", "time", "values")))
+  write.csv(outreu, file = names(tables)[6], row.names = F)
+  
+    # get yearlyDublin outgoing requests' decisions
+  outrd <- data.dl[[7]] %>% filter(request == "REQ", leg_prov == "TOTAL") %>%
+    select(one_of(c("partner", "geo", "time", "values", "decision")))
+  write.csv(outrd, file = names(tables)[7], row.names = F)
+  
+  # get decisions on outgoing Dublin based on EURODAC
+  outreud <- data.dl[[8]] %>% filter(request == "REQ", leg_prov == "EDAC") %>%
+    select(one_of(c("partner", "geo", "time", "values", "decision")))
+  write.csv(outreud, file = names(tables)[8], row.names = F)
+  
+} else {
+  data.read <- sapply(1:length(tables), function(i)
+    read.csv(names(tables)[i], stringsAsFactors = FALSE, check.names = F))
+  names(data.read) <-  gsub("\\.csv", "", gsub("data\\/", "", names(tables)))
+}
+
+```
+
+### Shape the data
+```{r shapeData, include=T}
+
+iso2.subset <- c("DE", "CH", "FR", "IT", "AT", "SE", "UK", "ES", "PT", "EL", "HU")
+names(iso2.subset) <- countrycode(iso2.subset, "iso2c", "country.name")
+names(iso2.subset)[which(iso2.subset == "UK")] <- "United Kingdom"
+names(iso2.subset)[which(iso2.subset == "EL")] <- "Greece"
+stopifnot(!any(is.na(names(iso2.subset))))
+
+# % missing data
+missingData <- function(df) {
+  round(tapply(df$values, df$time, function(v) (sum(is.na(v))/length(v)) ) * 100)
+}
+lapply(data.read, missingData)
+
+# Define time limits 
+time.limit <- range(data.read[[1]]$time) #as.Date(c("2009-01-01", "2014-01-01"))
+
+filterByIso2 <- function(
+  dd, citizen.filter = "TOTAL", geo.subset = iso2.subset, tStart = time.limit[1], tEnd = time.limit[2]
+) {
+ if("partner" %in% colnames(dd)) {
+   dd %>% filter(partner == citizen.filter, geo %in% geo.subset, time >= tStart, time <= tEnd)     
+ } else {
+   dd %>% filter(citizen == citizen.filter, geo %in% geo.subset, time >= tStart, time <= tEnd)     
+ }
+}
+
+data.sub <- sapply(data.read, filterByIso2)
+data.all <- sapply(data.read, function(dd) filterByIso2(dd, geo.subset = unique(data.read[[2]]$geo)))
+
+```
+
+## Combine datasets
+
+```{r comine datasets, echo = F, message = F}
+# massive check!
+stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[[2]]))
+stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[[3]]))
+stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['decisionDublinIn']]) / 3)
+stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['decisionDublinOut']]) / 3)
+stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['dublinOutEurodacDecision']]) / 3)
+stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['dublinOutT']]))
+stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['dublinOutREurodac']]))
+
+#compute % positive decision rate
+positiveDecision <- function(dd, name = "" ) {
+  result <- dd %>% group_by(geo, time) %>%
+    summarise(rate = values[which(decision == 'ACC')] / values[which(decision == 'TOTAL')]) %>% 
+    ungroup()
+  colnames(result)[which(colnames(result) == "rate")] <- name
+  result
+}
+
+data.sub[['decisionDublinIn']] <- positiveDecision(data.sub[['decisionDublinIn']], 'incomingAccRequestRate')
+data.sub[['decisionDublinOut']] <- positiveDecision(data.sub[['decisionDublinOut']], 'outgoingAccRequestRate')
+data.sub[['dublinOutEurodacDecision']] <- positiveDecision(data.sub[['dublinOutEurodacDecision']], 'outgoingEuroAccRequestRate')
+
+# join tables
+data <- select(data.sub[['asylumYearly']], -citizen) %>% 
+  left_join(data.sub[['dublinOutR']] %>% select(geo, values, time) %>% rename(outgoingRequest = values)) %>%
+  left_join(data.sub[['dublinInR']] %>% select(geo, values, time) %>% rename(incomingRequest = values)) %>%
+  left_join(data.sub[['dublinOutT']] %>% select(geo, values, time) %>% rename(outgoingTransfer = values)) %>%
+  left_join(data.sub[['dublinOutREurodac']] %>% select(geo, values, time) %>% rename(outgoingEurodacRequest = values)) %>%
+  left_join(data.sub[['decisionDublinIn']]) %>%
+  left_join(data.sub[['decisionDublinOut']]) %>%
+  left_join(data.sub[['dublinOutEurodacDecision']])
+
+data <- data %>% 
+  group_by(time, geo) %>% mutate(percOutgoingR = outgoingRequest / values) %>%
+  group_by(time, geo) %>% mutate(percOutgoingT = outgoingTransfer / values) %>% 
+  group_by(time, geo) %>% mutate(percEurodacOutgoing = outgoingEurodacRequest / outgoingRequest) %>%  
+  ungroup()
+
+data$time <- as.Date(data$time)
+data$country <- names(iso2.subset)[match(data$geo, iso2.subset)]
+
+vars <- colnames(data)[!colnames(data) %in% c('geo', 'time', 'country')]
+names(vars) <- c(
+  "Total number of asylum requests",
+  "Total number of outgoing Dublin requests",
+  "Total number of incoming Dublin requests",  
+  "Total number of outgoing Dublin transfers",
+  "Total number of outgoing Eurodac requests",
+  "Acceptance rate of incoming Dublin requests",
+  "Acceptance rate of outgoing Dublin requests",  
+  "Acceptance rate of outgoing Eurodac requests",  
+  "% of outgoing Dublin requests out of all asylum requests",
+  "% of outgoing Dublin transfers out of all asylum requests",  
+  "% of Eurodac requests out of all outgoing requests")
+
+```
+
+```{r plot total over all countries, message = F, warning = F, echo = F}
+
+positiveDecision2 <- function(dd, name = "" ) {
+  result <- dd %>% group_by(time) %>%
+    summarise(rate = sum(values[which(decision == 'ACC')], na.rm = T) / sum(values[which(decision == 'TOTAL')], na.rm = T)) %>% 
+    ungroup()
+  colnames(result)[which(colnames(result) == "rate")] <- name
+  result
+}
+
+data.all[['decisionDublinIn']] <- positiveDecision2(data.all[['decisionDublinIn']], 'incomingAccRequestRate')
+data.all[['decisionDublinOut']] <- positiveDecision2(data.all[['decisionDublinOut']], 'outgoingAccRequestRate')
+data.all[['dublinOutEurodacDecision']] <- positiveDecision2(data.all[['dublinOutEurodacDecision']], 'outgoingEuroAccRequestRate')
+
+data.all <- data.all[[1]] %>% group_by(time) %>% summarise(values = sum (values, na.rm = T))  %>% 
+  left_join(data.all[['dublinOutR']] %>% group_by(time) %>% summarise(outgoingRequest = sum(values, na.rm = T))) %>% 
+  left_join(data.all[['dublinInR']] %>% group_by(time) %>% summarise(incomingRequest = sum(values, na.rm = T))) %>%
+  left_join(data.all[['dublinOutT']] %>% group_by(time) %>% summarise(outgoingTransfer = sum(values, na.rm = T))) %>%
+  left_join(data.all[['dublinOutREurodac']] %>% group_by(time) %>% summarise(outgoingEurodacRequest = sum(values, na.rm = T))) %>%
+  left_join(data.all[['decisionDublinIn']]) %>%
+  left_join(data.all[['decisionDublinOut']]) %>%
+  left_join(data.all[['dublinOutEurodacDecision']])
+
+data.all$time <- as.Date(data.all$time)
+
+data.all <- data.all %>% 
+  group_by(time) %>% mutate(percOutgoingR = outgoingRequest / values) %>%
+  group_by(time) %>% mutate(percOutgoingT = outgoingTransfer / values) %>% 
+  group_by(time) %>% mutate(percEurodacOutgoing = outgoingEurodacRequest / outgoingRequest) %>%  
+  ungroup()
+
+
+myAreas <- function(dat = data, x = "time", y = "values", title = "") {
+  ggplot(data = dat) + geom_area(aes_string(x, y), fill = "grey") + 
+    swi_theme(base_size = 13) + ggtitle(title) +
+    scale_x_date(breaks = pretty_breaks(n = 5)) +
+    xlab("")  
+}
+
+invisible(sapply(1:length(vars), function(i) {
+  print(myAreas(dat = data.all, y = vars[i], title = paste0(i, " - ", names(vars)[i])))} 
+))
+
+
+```
+
+
+### Plot
+
+## Plot general countries' figures 
+
+Interesting charts
+
+* Chart 6: Switzerland seems to have a rather low acceptance rate for Dublin requests
+* Chart 7: Switzerland has clearly of the lowest acceptance rate for its Dublin requests (I guess Italy is a special case?)
+* Chart 11: The share of eurodac request among all its outgoing Dublin requests is small for Switzerland. 
+
+```{r plot by country, message = F, warning = F, echo = F}
+# helper plot
+myFacetedAreas <- function(dat = data, x = "time", y = "values", fill = "geo", title = "") {
+  ggplot(data = dat) + geom_area(aes_string(x, y, fill = fill)) + 
+    facet_wrap( ~ country, ncol = 3) + swi_theme(base_size = 13) + ggtitle(title) +
+    scale_x_date(breaks = pretty_breaks(n = 5)) +
+    scale_fill_manual(values = swi_rpal) + guides(fill=FALSE) + xlab("")  
+}
+#myFacetedAreas(title = "Total number of asylum requests")
+
+## Plot
+
+
+invisible(sapply(1:length(vars), function(i) {
+  print(myFacetedAreas(y = vars[i], title = paste0(i, " - ", names(vars)[i])))} 
+))
+```
+
+## Combine the overall total and subsets in one 
+
+```{r combine}
+data.all$country <- data.all$geo <- "TOTAL"
+# elegant reordering of columns
+data.all %>% select(geo, everything(), country)
+
+data.merged <- rbind(data, data.all)
+
+```

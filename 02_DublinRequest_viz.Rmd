@@ -1,0 +1,508 @@
+---
+title: "Dublin requests"
+author: "Duc-Quang Nguyen | swissinfo.ch"
+date: "27.10.2016"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    theme: simplex
+---
+
+```{r setup, include=FALSE}
+
+translation_chord.file <- "input/translations_DublinTransfers_chordDiagram.csv"
+
+total.outgoing4DW_all.file <- "input/outgoingTotal_all_DW.csv"
+total.outgoing4DW_sub.file <- "input/outgoingTotal_sub_DW.csv"
+
+acceptanceRate4DW.sub.file <- "input/acceptanceRate_sub_DW.csv"
+
+library(readr)
+library(tidyr)
+library(dplyr)
+library(magrittr)
+library(countrycode)
+library(ggplot2)
+library(scales)
+library(swiMap)
+library(swiTheme)
+library(forcats)
+library(knitr)
+
+### Interactive 
+library(htmltools)
+library(htmlwidgets)
+library(shiny)
+library(swiRcharts)
+library(rCharts)
+library(streamgraph)
+```
+
+# Load all data
+```{r load data}
+tables <- c(
+  "data/dublinOutR.csv",  "data/dublinInR.csv", 
+  "data/decisionDublinIn.csv", "data/dublinOutT.csv", "data/dublinOutREurodac", 
+  "data/decisionDublinOut.csv", "data/dublinOutEurodacDecision")
+
+data.read <- sapply(1:length(tables), function(i)
+    read.csv(tables[i], stringsAsFactors = FALSE, check.names = F))
+
+names(data.read) <-  gsub("\\.csv", "", gsub("data\\/", "", tables))
+  
+```
+
+## Dublin requests (based on outgoing)
+
+```{r wrangling and stats for outgoing Dublin requests, include = F}
+outR <- data.read[['dublinOutR']]
+
+# in 2015, what is the share of request of top countries
+outR.2015 <- outR %>% filter(time == as.Date("2015-12-31"), partner == "TOTAL") %>%
+  mutate(yearlyTot = sum(values))
+outR.2015$share <- (outR.2015$values / outR.2015$yearlyTot) * 100
+outR.2015 %<>% arrange(desc(share))
+kable(head(outR.2015), digits=2)
+
+#compute the incoming number of request from outgoing data
+inR <- outR %>% filter(partner != "TOTAL") %>%
+  group_by(partner, time) %>%
+  summarise(incoming = sum(values, na.rm = T)) %>%
+  ungroup()
+
+# http://www.nytimes.com/2015/09/17/world/europe/europe-refugees-migrants-rules.html?_r=0
+inR %<>% group_by(time) %>%
+  mutate(yearlyTot = sum(incoming)) %>%
+  ungroup()
+
+inR$share <- (inR$incoming / inR$yearlyTot) * 100
+inR %<>% arrange(time, desc(share))
+```
+
+#### Streamgraph outgoing requests
+```{r viz outgoing Dublin requests over time as a streamgraph, include = F}
+outR <- data.read[['dublinOutR']]
+# Find the top countries/geo overall
+totOutR <- outR %>% group_by(geo) %>%
+  summarise(totOutR = sum(values, na.rm = T)) %>%
+  arrange(desc(totOutR))
+  
+# merge non-frequent geos
+topOutR.geo <- totOutR %>% head(10) %>% select(geo) %>% unlist(use.names = F)
+
+outR$group <- ifelse(outR$geo %in% topOutR.geo, outR$geo, "others")
+outr <- outR %>% filter(partner == "TOTAL") %>%
+  group_by(group, time) %>%
+  summarise(values = sum(values, na.rm = T)) %>%
+  ungroup()
+outr$time <- as.Date(outr$time)
+# order factor decreasing values
+ordered.l<- outr %>% group_by(group) %>% 
+  summarise(tot = sum(values)) %>% 
+  arrange(desc(tot)) %>% select(group) %>% unlist(use.names = F)
+outr$group <- factor(outr$group, levels = ordered.l)
+outr %<>% arrange(desc(group))
+
+labels <- data.frame(
+  label = c("Germany", "Switzerland", "Sweden", "Others"),
+  x = c(rep(as.Date("2015-04-03"), 3), as.Date("2009-03-01")),
+  y = c(30000, 50000, 65000, 60500)
+)
+
+sg <- streamgraph(outr, group, values, time, right = 7) %>% 
+  sg_axis_x(tick_interval = 1, "year", tick_format = "%Y") %>%
+  sg_fill_brewer("BuPu") %>%
+ # sg_legend(TRUE, "Country") %>% 
+  sg_annotate(label = labels$label[1], x = labels$x[1], y = labels$y[1], color = "#333333") %>%
+  sg_annotate(label = labels$label[2], x = labels$x[2], y = labels$y[2], color = "#333333") %>%
+  sg_annotate(label = labels$label[3], x = labels$x[3], y = labels$y[3], color = "white") %>%
+  sg_annotate(label = labels$label[4], x = labels$x[4], y = labels$y[4], color = "#333333")
+  
+  sg$sizingPolicy$browser$padding <- 0
+  sg$sizingPolicy$browser$defaultWidth <- "100%"
+
+  sg
+  #chord$height <- "95%"
+  saveWidget(sg, file = "streamgraph_tmp.html", selfcontained = FALSE, libdir = "js")
+  html.grabbed <- grab_widgetHTML("streamgraph_tmp.html")
+
+  html.code <- html.grabbed[['html']]
+  istart <- min(grep("script", html.code))
+  iend <- max(grep("</head>", html.code))
+  header <- html.code[istart:iend-1]
+  
+  
+  lang <- 'EN'
+  save_html(
+    tags$html(
+     tags$head(
+       HTML(paste0("<link href='https://fonts.googleapis.com/css?family=Open+Sans+Condensed:300,700,300italic&subset=latin,cyrillic' rel='stylesheet' type='text/css'>", 
+       paste0(header, collapse =""), collapse =""))),
+      tags$body(
+       h2(HTML("Number of Dublin requests tripled over 7 years, largely fuelled by Germany Switzerland")),
+       div(class = "descr", "Dublin requests by country of origin, by year from 2008 until 2015. Some missing data"),
+        div(class = "container", HTML(html.code[html.grabbed[['istart']]:html.grabbed[['iend']]])),
+       div(id = "cite", HTML("footer asdfasfsadf")),
+        HTML(iframeresizer)
+      )), file = paste0("streamgraph_", lang, ".html"), libdir = "js"
+  )
+  swi_libWidget_overwrite()
+  
+```
+
+## Dublin incoming requests (based on outgoing data)
+```{r incoming request (based on outgoing data), echo = F}
+# Find the top countries/geo overall
+totInR <- inR %>% group_by(partner) %>%
+  summarise(totInR = sum(incoming, na.rm = T)) %>%
+  arrange(desc(totInR))
+  
+# merge non-frequent geos
+totInR.ptn <- totInR %>% head(6) %>% select(partner) %>% unlist(use.names = F)
+
+inR$group <- ifelse(inR$partner %in% totInR.ptn, inR$partner, "others")
+
+inr <- inR %>%
+  group_by(group, time) %>%
+  summarise(values = sum(incoming, na.rm = T)) %>%
+  ungroup()
+inr$time <- as.Date(inr$time)
+# order factor decreasing values
+ordered.l<- inr %>% group_by(group) %>% 
+  summarise(tot = sum(values)) %>% 
+  arrange(desc(tot)) %>% select(group) %>% unlist(use.names = F)
+inr$group <- factor(inr$group, levels = ordered.l)
+inr %<>% arrange(desc(group))
+
+# 1. streamgraph
+sg2 <- streamgraph(inr, group, values, time, right = 7) %>% 
+  sg_axis_x(tick_interval = 1, "year", tick_format = "%Y") %>%
+  sg_fill_brewer("Blues") 
+
+  sg2$sizingPolicy$browser$padding <- 0
+  sg2$sizingPolicy$browser$defaultWidth <- "100%"
+
+  #chord$height <- "95%"
+  saveWidget(sg2, file = "streamgraph_incoming_tmp.html", selfcontained = FALSE, libdir = "js")
+  swi_libWidget_overwrite()
+sg2
+## 2. overall
+ggplot(data = inr) + geom_area(aes(time, values)) + facet_wrap(~ group)
+
+
+```
+
+## Dublin transfers
+
+### Shape outgoing transfer data
+
+```{r Dublin transfers, include = F}
+
+outT <- data.read[['dublinOutT']]
+# discard data from 2008 because Switzerland wasn't in Dublin
+outT %<>% filter(time > as.Date("2008-12-31"))
+
+tRange <- range(outT$time)
+outT %<>% filter(partner != "TOTAL") %>% 
+  group_by(partner, geo) %>% 
+  dplyr::summarise(tot = sum(values, na.rm = T)) %>% 
+  ungroup() %>% rename(iso2.from = geo) %>%
+  rename(iso2.to = partner)
+
+outT[which(outT$iso2.from == 'UK'), 'iso2.from'] <- 'GB'
+outT[which(outT$iso2.from == 'EL'), 'iso2.from']  <- 'GR'
+outT[which(outT$iso2.to == 'UK'), 'iso2.to'] <- 'GB'
+outT[which(outT$iso2.to == 'EL'), 'iso2.to']  <- 'GR'
+
+stopifnot(!any(is.na(outT$iso2.to)), !any(is.na(outT$iso2.from)))
+
+ddd.f <- outT %>% group_by(iso2.from) %>% dplyr::summarise(tot = sum(tot, na.rm = T)) %>% ungroup() %>% arrange(desc(tot))
+ddd.t <- outT %>% group_by(iso2.to) %>% dplyr::summarise(tot = sum(tot, na.rm = T)) %>% ungroup() %>% arrange(desc(tot))
+  
+hist(ddd.f$tot, breaks = 100)  
+quantile(ddd.f$tot, 0.5)
+
+threshold <- 4000
+iso2agg.f <- ddd.f[ddd.f$tot < threshold, "iso2.from"] %>% unlist(use.names = F)
+iso2agg.t <- ddd.t[ddd.t$tot < threshold, "iso2.to"] %>% unlist(use.names = F)
+iso2agg <- intersect(iso2agg.f, iso2agg.t)
+  
+## aggregate countries 
+outT %>% mutate(iso2.from = replace(iso2.from, iso2.from %in% iso2agg, "autres")) %>%
+  mutate(iso2.to = replace(iso2.to, iso2.to %in% iso2agg, "autres")) -> ddd 
+
+df <- ddd %>% group_by(iso2.from, iso2.to) %>% 
+  dplyr::summarise(tot = sum(tot, na.rm = T)) %>% ungroup()
+
+tmp <- df %>% spread(iso2.from, tot)
+ot <- tmp %>% select(-iso2.to) 
+rownames(ot) <- tmp[,1] %>% unlist(use.names = F)
+ot <- as.matrix(ot)
+
+stopifnot(all(rownames(ot) %in% colnames(ot)))
+ot <- ot[,order(colnames(ot))]
+ot <- ot[order(rownames(ot)),]
+stopifnot(rownames(ot) == colnames(ot))
+
+#colSums(ot, na.rm = T)
+dimnames(ot) <- list(to = rownames(ot), from = colnames(ot))
+```
+
+```{r stats Dublin transfers, echo = F, results = "asis"}
+cat("\n#### Total Dublin transfers\n From ", tRange, sum(outT$tot), "\n\n")
+cat("All the transfers from CH to IT represents:", ot['IT', 'CH'], " i.e. ", (ot['IT', 'CH'] / sum(outT$tot)) * 100, "% of all transfers")
+```
+
+### Plot chord diagrams
+```{r chord diagram}
+## Read translation csv
+#txt <- read.csv(translation_chord.file, row.names = 1, stringsAsFactors = F)
+txt <- loadTranslation(translation_chord.file)
+
+## Plot setting
+groupnamePadding <- 5
+margin  <- 53
+groupnameFontsize <- 15
+ticklabelFontsize <- 0
+showTicks <- F
+height <- 560
+
+#for(lang in colnames(txt)) {
+for(lang in "IT") {  
+  
+  chord_outgoing.file <- paste0("chordDublin_outgoing_", lang, ".html")
+ 
+  mat <- ot
+  pays <- rownames(mat)
+  pays[pays != "autres"] <- countryTranslation(pays[pays != "autres"], lang)[,2]
+  if(lang == 'EN') {
+    pays[pays == "United Kingdom"] <- "UK"
+  }
+  
+  pays[pays == "autres"] <- txt['otherEUcountries', lang]
+  dimnames(mat) <- list(to = pays, from = pays)
+  tooltipGroupConnector <- " &#x25B6; "
+  if(lang == 'AR') {
+    tooltipGroupConnector <- " &#x25C0; "
+    groupnameFontsize <- groupnameFontsize + 1
+  }
+  if(lang == 'JA') {
+    margin <- margin + 7
+  }
+  library(chorddiag)
+  
+  ## If height is defined much less responsive !!!!!! <--------
+  
+  # plot chord diagram
+  chord.out <- chorddiag(t(mat), groupnamePadding = groupnamePadding, groupnameFontsize = groupnameFontsize, tooltipGroupConnector = tooltipGroupConnector, 
+    groupColors = swi_rpal, margin = margin, ticklabelFontsize = ticklabelFontsize, height = height, 
+    showTicks = showTicks, groupThickness = 0.07)
+  chord.out$sizingPolicy$browser$defaultWidth <- "100%"
+  chord.out$sizingPolicy$defaultWidth <- "100%"
+    
+  saveWidget(chord.out, file = "chordDublin_outgoing_tmp.html", selfcontained = FALSE, libdir = "js")
+  
+  html.grabbed <- grab_widgetHTML("chordDublin_outgoing_tmp.html")
+  html.code <- html.grabbed[['html']]
+  istart <- min(grep("script", html.code))
+  iend <- max(grep("</head>", html.code))
+  header <- html.code[istart:iend-1]
+  
+  source <- paste0(
+    txt["source", lang], ": ", 
+    htmlLink("http://ec.europa.eu/eurostat/en/web/products-datasets/-/MIGR_DUBTO", txt["source.name", lang]),
+    " | ", txt["code", lang], ": ", htmlLink("https://github.com/mattflor/chorddiag", "chorddiagR"),
+    " | ", htmlLink("https://twitter.com/duc_qn", "@duc_qn"), " | swissinfo.ch")
+    
+  footer <- paste0(txt['otherEUcountries', lang], ": ", paste(countryTranslation(iso2agg, lang)[,2], collapse =", "))
+  
+mquery.css <- '<style>@media only screen and (max-width: 600px) {body {font-size: 14px;}}</style>'
+  
+  save_html(
+    tags$html(
+      tags$head(HTML(paste0(paste0(header, collapse = ""), mquery.css))),
+      tags$body(
+        h2(HTML( txt["outgoing.title", lang])),
+        div(class = "descr",  txt["descr", lang]),
+        div(class = "container", HTML(html.code[html.grabbed[['istart']]:html.grabbed[['iend']]])),
+        div(id = "cite", HTML(source)),
+        div(id = "footer", HTML(footer)),
+        HTML(iframeresizer)
+      )), file = chord_outgoing.file, libdir = "js"
+  )
+  swi_libWidget_overwrite()
+}
+
+```
+
+## Get total outgoing requests, positive decision and transfers
+
+```{r get data, include = F}
+outR <- data.read[['dublinOutR']]
+outR %<>% filter(time > as.Date("2008-12-31"))
+
+df <- outR %>% filter(partner == "TOTAL") %>%
+  group_by(geo) %>% summarise(outgoingR = sum(values)) %>%
+  ungroup() %>% arrange(desc(outgoingR))
+
+outD <- data.read[['decisionDublinOut']]
+outD %<>% filter(time > as.Date("2008-12-31"), partner == "TOTAL")
+outD %<>% spread(decision, values)
+# rewrite total decisions if NA by summing acc + ref!
+outD$TOTAL <- ifelse(is.na(outD$TOTAL), outD$ACC + outD$REF, outD$TOTAL)
+
+df <- left_join(df, 
+          outD %>% group_by(geo) %>% 
+            summarise(ACC = sum(ACC), REF = sum(REF), TOTAL = sum(TOTAL), accRate = (sum(ACC) /  sum(TOTAL)) * 100) %>%
+            ungroup() %>% arrange(desc(TOTAL))
+)
+
+outT <- data.read[['dublinOutT']]
+# discard data from 2008 because Switzerland wasn't in Dublin
+outT %<>% filter(time > as.Date("2008-12-31"))
+df.all <- left_join(df, 
+                outT %>% filter(partner == "TOTAL") %>%
+                  group_by(geo) %>% summarise(outgoingT = sum(values)) %>%
+                  ungroup() %>% arrange(desc(outgoingT))
+)
+
+write.csv(df.all, file = total.outgoing4DW_all.file, row.names = F)
+
+# merge geo with less than 2000 outgoing requests
+iso2.keep <- df %>% filter(outgoingR >= 2000) %>% select(geo) %>% unlist(use.names = F)
+df.sub <- rbind(
+  df.all %>% filter(geo %in% iso2.keep) %>% select(-TOTAL, -accRate),
+  df.all %>% filter(!geo %in% iso2.keep) %>%
+    mutate(geo = "others") %>% group_by(geo) %>% 
+    summarise(outgoingR = sum(outgoingR), ACC = sum(ACC), REF = sum(REF), outgoingT = sum(outgoingT)) %>%
+    ungroup()
+)  
+write.csv(df.sub, file = total.outgoing4DW_sub.file, row.names = F)
+
+```
+
+### Viz acceptance rate over time
+```{r accpeptance rate}
+outD <- data.read[['decisionDublinOut']]
+outD %<>% filter(partner == "TOTAL") %>% select(-partner)
+outD %<>% spread(decision, values)
+# rewrite total decisions if NA by summing acc + ref!
+outD$TOTAL <- ifelse(is.na(outD$TOTAL), outD$ACC + outD$REF, outD$TOTAL)
+
+outD.all <- outD %>% select(-geo) %>% group_by(time) %>% 
+  summarise(ACC = sum(ACC), REF = sum(REF), TOTAL = sum(TOTAL)) %>%
+  ungroup() %>%
+  mutate(geo = "ALL") %>% select(geo, everything())
+outD <- rbind(outD, outD.all)
+outD$accRate <- (outD$ACC / outD$TOTAL) * 100
+outD$time <- as.Date(outD$time)
+
+# Test plot all acceptrance rate
+ggplot(data = outD) + geom_area(aes(x = time, y = accRate))  + facet_wrap(~geo)
+
+
+# get subest data
+iso2.sub <- c('DE', 'AT', 'CH', 'SE', 'FR', 'ALL')
+df.sub <- outD %>% filter(geo %in% iso2.sub) %>% select(-ACC, -REF, -TOTAL) %>%
+  spread(geo, accRate)
+write.csv(df.sub, file = acceptanceRate4DW.sub.file, row.names = F)
+
+```
+## Eurodac vs non-eurodac
+
+```{r get data eurodac, include = F}
+# total outgoing requests
+outR <- data.read[['dublinOutR']] %>% filter(partner == "TOTAL") %>% 
+  select(-partner) %>% rename(request = values)
+# merge with eurodac requests
+outR <- left_join(
+  outR,
+  data.read[['dublinOutREurodac']] %>% filter(partner == "TOTAL")  %>% 
+    select(-partner)  %>% rename(eurodac = values)
+)
+outR <- rbind(
+  outR,
+  outR %>% select(-geo) %>% group_by(time) %>% 
+  summarise(request = sum(request), eurodac = sum(eurodac, na.rm = T)) %>%
+  ungroup() %>%
+  mutate(geo = "Tous les pays") %>% select(geo, everything())
+)
+outR$eurodacShare <- outR$eurodac / outR$request
+
+# Test plot all acceptrance rate
+outR$time <- as.Date(outR$time)
+ggplot(data = outR) + geom_area(aes(x = time, y = eurodacShare))  + facet_wrap(~geo)
+
+```
+
+### Viz small multiples
+
+```{r viz share eurdac}
+library(metricsgraphics)
+library(shiny)
+
+iso2.sub <- c('Tous les pays', 'DE',  'SE', 'AT', 'FR', 'CH')
+regions <- iso2.sub
+names(regions) <- rep('#2b5555', length(regions)) #swi_rpal[1:length(iso2.sub)]
+names(regions)[1] <- '#333366'
+names(regions)[which(regions == 'CH')] <- '#963638'
+#outR.sub <- outR %>% filter(geo %in% iso2.sub)
+
+# Helper
+singleMetricGraphic <- function(df, reg, regions, height = "290px", axis.x = "year", axis.y = "eurodac share") {
+ # browser()
+  col <- names(regions)[which(regions == reg)]
+  axis.labels <- c( gsub(" ", "_", axis.x), gsub(" ", "_", axis.y))
+  
+  dff <- df[which(df$geo == reg),]
+  colnames(dff)[which(colnames(dff) == "time")] <- axis.labels[1]
+  colnames(dff)[which(colnames(dff) == "eurodacShare")] <- axis.labels[2]
+    
+  mjs_plot(data = dff, 
+           x = axis.labels[1], y = axis.labels[2],
+           format="percentage", 
+           width="100%", height=height,
+           decimals = 1,
+           left = 28, right = 4, bottom = 20, top = 0, buffer = 0, linked = F, 
+           title = "") %>%
+    mjs_line(area = TRUE, color = col) %>%
+    mjs_axis_y(min_y = 0, max_y = max(df$eurodacShare, na.rm = T)) %>% 
+    mjs_axis_x(xax_count = 0) %>%
+    mjs_labs(x_label = unique(dff$label))  
+}
+
+
+lang <- 'FR'
+
+#for(lang in colnames(txt)) {
+  
+  reg.df <- outR %>% filter(geo %in% iso2.sub)
+  reg.df$time <- as.numeric(format(as.Date(reg.df$time), "%Y"))
+  reg.df$label <- reg.df$geo 
+  reg.df$label[which(reg.df$label != "Tous les pays")] <- countryTranslation(reg.df$label[which(reg.df$label != "Tous les pays")], lang)[,-1]
+  
+  if(any(is.na(reg.df$label))) stop()
+  
+  plots <- lapply(iso2.sub, function(reg) 
+    singleMetricGraphic(reg.df, reg, regions, height = "270px") #, axis.x = txt["axis.x", lang], axis.y = txt["axis.y", lang])
+  ) 
+  
+  save_html(
+    fluidPage(
+     tags$h2("La Suisse championne de requêtes Dublin infondées"), #txt['title1', lang]),
+    div(class = "descr", "Share of Eurodac requests out of all outgoing requests, 2008-2015 and by country"), #txt['desc', lang]),
+      div(class="graphic", fluidRow(lapply(1:length(plots), function(i) column(4, plots[[i]])))),
+      div(id = "cite", HTML("Footer: sadfsadfsdaf")),
+      HTML(iframeresizer)  
+    ), file = paste0("eurodac_share_smallMultiples_", lang,".html"), libdir = "js")
+  
+  # overwrite meticgraphics.css by custom version for small multiples using x axis title 
+  original <- list.files("js", "metricsgraphics.css", full.names = T, recursive = T)
+  file.copy(
+    list.files(system.file("extdata", package="swiRcharts"), 'metricsgraphics_smallMultiple_xTitles.css', full.names = T),
+    original, overwrite = T)  
+  
+  
+#}
+```

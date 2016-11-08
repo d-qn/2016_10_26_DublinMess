@@ -1,0 +1,120 @@
+---
+title: "Dublin pairwise bonanza"
+author: "Duc-Quang Nguyen"
+date: "8 July 2016"
+output: html_document
+---
+
+```{r, message = F, echo = F, warning = F}
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(countrycode)
+library(ggplot2)
+library(swiTheme)
+library(scales)
+```
+
+```{r load data, echo = F}
+tables <- c('migr_asyappctza', 'migr_dubro', 'migr_dubri', 'migr_dubdi', 'migr_dubto', "migr_dubredaco", 'migr_dubdo', 'migr_dubdedaco')
+names(tables) <- c(
+  "data/asylumYearly.csv", "data/dublinOutR.csv",  "data/dublinInR.csv", "data/decisionDublinIn.csv", "data/dublinOutT.csv", 
+  "data/dublinOutREurodac", "data/decisionDublinOut.csv", "data/dublinOutEurodacDecision")
+
+asyl <- read.csv(names(tables)[1], stringsAsFactors = FALSE, check.names = F)
+outr <- read.csv(names(tables)[2], stringsAsFactors = FALSE, check.names = F)
+inr <- read.csv(names(tables)[3], stringsAsFactors = FALSE, check.names = F)
+inrd <- read.csv(names(tables)[4], stringsAsFactors = FALSE, check.names = F)
+outt <- read.csv(names(tables)[5], stringsAsFactors = FALSE, check.names = F)
+outreu <- read.csv(names(tables)[6], stringsAsFactors = FALSE, check.names = F)  
+outrd <- read.csv(names(tables)[7], stringsAsFactors = FALSE, check.names = F)  
+outreud  <- read.csv(names(tables)[8], stringsAsFactors = FALSE, check.names = F)  
+
+iso2 <- unique(inrd$partner)
+names(iso2) <- countrycode(iso2, "iso2c", "country.name")
+names(iso2)[which(iso2 == "UK")] <- "United Kingdom"
+names(iso2)[which(iso2 == "EL")] <- "Greece"
+names(iso2)[which(iso2 == "TOTAL")] <- "TOTAL"
+stopifnot(!any(is.na(names(iso2))))
+
+```
+
+## Shape the data
+```{r shape, echo = F, message = F, warning = F}
+inrd %<>% group_by(partner, geo, time) %>% 
+  summarise(
+    incomingRequestAccRate = values[which(decision == "ACC")] / values[which(decision == "TOTAL")],
+    incomingTotal =  values[which(decision == "TOTAL")]
+  ) %>% ungroup()
+
+outrd %<>% group_by(partner, geo, time) %>% 
+  summarise(
+    outgoingRequestAccRate = values[which(decision == "ACC")] / values[which(decision == "TOTAL")],
+    outgoingTotal =  values[which(decision == "TOTAL")]
+  ) %>% ungroup()
+
+requests <- inrd %>% group_by(geo) %>% filter(partner == "TOTAL") %>% 
+    summarise(tot = sum(incomingTotal, na.rm = T)) %>% ungroup() %>% cbind(type="incoming") %>%
+bind_rows(
+    outrd %>% group_by(geo) %>% filter(partner == "TOTAL") %>% 
+  summarise(tot = sum(outgoingTotal, na.rm = T)) %>% ungroup() %>% cbind(type="outgoing")   
+) %>% arrange(desc(tot))
+
+inrd$geoN <- names(iso2)[match(inrd$geo, iso2)]
+inrd$partnerN <- names(iso2)[match(inrd$partner, iso2)]
+inrd$time <- as.Date(inrd$time)
+
+outrd$geoN <- names(iso2)[match(outrd$geo, iso2)]
+outrd$partnerN <- names(iso2)[match(outrd$partner, iso2)]
+outrd$time <- as.Date(outrd$time)
+```
+
+# Plot the incoming/outgoing request and rate by country
+```{r plot, message = F, echo =F, warning=F}
+
+iso2.sub <- c('IT', 'CH', 'AT', 'BE', 'FR', 'DE', 'SE', 'UK', 'TOTAL')
+inrd.sub <- inrd %>% filter(geo %in% iso2.sub, partner %in% iso2.sub)
+outrd.sub <- outrd %>% filter(geo %in% iso2.sub, partner %in% iso2.sub)
+geoN <- c('Switzerland', 'Italy') #unique(inrd.sub$geoN)
+
+
+invisible(sapply(geoN, function(country) {
+  dd <- inrd.sub %>% filter(geoN == country)
+
+  ptot <- ggplot(data = dd) + 
+    geom_area(aes(x = time, y = incomingTotal, group = partnerN, fill = partnerN)) + 
+    facet_wrap(~ partnerN, ncol = 3) + swi_theme() + 
+    guides(fill=FALSE) + xlab("")  + 
+    scale_x_date(breaks = pretty_breaks(n =8)) +
+    ggtitle(paste0("Incoming request count of: ", country, ", from"))
+  print(ptot)
+  
+  prate <- ggplot(data = dd) + 
+    geom_area(aes(x = time, y = incomingRequestAccRate, group = partnerN, fill = partnerN)) + 
+    facet_wrap(~ partnerN, ncol = 3) + swi_theme() + 
+    guides(fill=FALSE) + xlab("")  + 
+    scale_x_date(breaks = pretty_breaks(n =8)) +
+    ggtitle(paste0("Incoming request acceptance rate of: ", country, ", from"))
+  print(prate)
+  
+  dd <- outrd.sub %>% filter(geoN == country)
+  p2tot <- ggplot(data = dd) + 
+    geom_area(aes(x = time, y = outgoingTotal, group = partnerN, fill = partnerN)) + 
+    facet_wrap(~ partnerN, ncol = 3) + swi_theme() + 
+    guides(fill=FALSE) + xlab("")  + 
+    scale_x_date(breaks = pretty_breaks(n =8)) +
+    ggtitle(paste0("Outgoing request count of: ", country, ", to"))
+  print(p2tot)
+  
+  p2rate <- ggplot(data = dd) + 
+    geom_area(aes(x = time, y = outgoingRequestAccRate, group = partnerN, fill = partnerN)) + 
+    facet_wrap(~ partnerN, ncol = 3) + swi_theme() + 
+    guides(fill=FALSE) + xlab("")  + 
+    scale_x_date(breaks = pretty_breaks(n =8)) +
+    ggtitle(paste0("Outgoing request acceptance rate of: ", country, ", to"))
+  print(p2rate)
+
+}))
+
+```
+

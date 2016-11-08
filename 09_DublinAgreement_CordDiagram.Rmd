@@ -1,0 +1,288 @@
+---
+title: "Get Dublin in-out eurostat data"
+author: "Duc-Quang Nguyen"
+date: "28 January 2016"
+output: 
+  html_document:
+    code_folding: show
+---
+
+#### Settings
+```{r}
+downloadData <- F
+# Eurostat data tables
+transfer.tb <- c('migr_dubti', 'migr_dubto', 'migr_dubri', 'migr_dubdo')
+
+translation_chord.file <- "input/translations_DublinTransfers_chordDiagram.csv"
+
+# Save data files
+alldata.file <- "data/allData_DublinTransfer.csv"
+trdata.file <- "data/data_DublinTransfer.csv"
+incomingR.file <- "data/incomingR.csv"
+outgoingD.file <- "data/outgoingD.csv"
+```
+
+```{r, message = F, echo = F, warning = F}
+library(eurostat)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(countrycode)
+  
+library(chorddiag)
+library(htmlwidgets)
+library(swiTheme)
+library(swiMap)
+library(swiRcharts)
+```
+
+### Get data from Eurostat
+```{r}
+if(downloadData) {
+  # warning the data to download is very large over 1 Gb !
+
+  getData <- function(dataID) {
+  cat("\n", dataID)
+   dat <- get_eurostat(dataID, time_format = "raw", cache = F)
+   data <- cbind(label_eurostat(dat), iso2 = dat$geo)
+
+    # transform dates efficiently!
+    times <- unique(data$time)
+    times <- structure(eurostat:::eurotime2date(times, last = FALSE), names = as.character(times))
+    data$time <- times[match(data$time, names(times))]  
+    data
+  }
+  data.dl <- lapply(transfer.tb, getData)
+
+  filterData <- function(df) {
+    df %>% filter(leg_prov == "Total requests", duration == "Total") %>%
+      select(one_of(c('partner', 'geo', 'values', 'iso2', 'time')))
+  }
+  data.read <- rbind(
+    cbind(filterData(data.dl[[1]]), type="incoming"),
+    cbind(filterData(data.dl[[2]]), type="outgoing")
+  )
+
+  write.csv(data.read, file = alldata.file, row.names = F)
+  data <- data.read %>% filter(time == max(data.read$time)) %>% select(-time)
+  write.csv(data, file = trdata.file, row.names = F)    
+  
+  # clean up incoming requests
+  incomingR <- data.dl[[3]] %>% filter( request == "Requests", 
+    leg_prov == "Total requests")
+  write.csv(incomingR, file = incomingR.file, row.names = F)  
+  
+  # clean up outgoing decisions
+  outgoingD <-  data.dl[[4]] %>% filter( leg_prov == "Total requests", 
+    partner == "Total", request == "Requests") %>%
+    select(-unit, -leg_prov, -request)
+  write.csv(outgoingD, file = outgoingD.file, row.names = F)  
+} else {
+  data <- read.csv(alldata.file, stringsAsFactors = FALSE, check.names = F)
+  incomingR <- read.csv(incomingR.file, stringsAsFactors = FALSE, check.names = F)
+  outgoingD <- read.csv(outgoingD.file, stringsAsFactors = FALSE, check.names = F)
+}
+```
+
+#### Check the incoming and outgoing balance!
+```{r}
+  # 
+  data %<>% filter(time != "2008-01-01")
+
+  data %>% filter(partner == "Total") %>% group_by(type) %>% 
+  dplyr::summarise(tot = sum(values, na.rm = T))
+
+```
+
+
+### Shape the data
+```{r}
+  data %<>% filter(partner != "Total") %>% 
+    group_by(partner, geo, iso2, type) %>% 
+    dplyr::summarise(tot = sum(values, na.rm = T)) %>% ungroup()
+
+  data %<>% rename(iso2.from = iso2)
+  
+  data$iso2.to <- countrycode(data$partner, "country.name", "iso2c")
+  stopifnot(!any(is.na(data$iso2.to)))
+  dd <- data %>% select(tot, iso2.from, iso2.to, type)
+  
+  dd %>% group_by(iso2.from, type) %>% dplyr::summarise(tot = sum(tot, na.rm = T)) %>% 
+    group_by(type) %>% dplyr::summarise(tot = sum(tot))
+  dd %>% group_by(iso2.to, type) %>% dplyr::summarise(tot = sum(tot, na.rm = T)) %>% 
+    group_by(type) %>% dplyr::summarise(tot = sum(tot)) 
+  
+  ########### TAKE ONLY OUTGOING TRANSFERS  ############
+  ## find countries with unfrequent transfer (both from and towards)
+  ddd <- filter(dd, type == "outgoing") %>% select(-type) 
+  ddd.f <- ddd %>% group_by(iso2.from) %>% dplyr::summarise(tot = sum(tot, na.rm = T)) %>% ungroup()
+  ddd.t <- ddd %>% group_by(iso2.to) %>% dplyr::summarise(tot = sum(tot, na.rm = T)) %>% ungroup()
+  
+  hist(ddd.f$tot, breaks = 100)  
+  quantile(ddd.f$tot, 0.5)
+
+  threshold <- 5000
+  iso2agg.f <- ddd.f[ddd.f$tot < threshold, "iso2.from"] %>% unlist(use.names = F)
+  iso2agg.t <- ddd.t[ddd.t$tot < threshold, "iso2.to"] %>% unlist(use.names = F)
+  iso2agg <- intersect(iso2agg.f, iso2agg.t)
+  
+  ## aggregate countries 
+  ddd %>% mutate(iso2.from = replace(iso2.from, iso2.from %in% iso2agg, "autres")) %>%
+    mutate(iso2.to = replace(iso2.to, iso2.to %in% iso2agg, "autres")) -> ddd 
+  
+  df <- ddd %>% group_by(iso2.from, iso2.to) %>% dplyr::summarise(tot = sum(tot, na.rm = T)) %>% ungroup()
+  
+  tmp <- df %>% spread(iso2.from, tot)
+  ot <- tmp %>% select(-iso2.to) 
+  rownames(ot) <- tmp[,1] %>% unlist(use.names = F)
+  ot <- as.matrix(ot)
+  
+  colnames(ot) <- ifelse(colnames(ot) == "UK", "GB", colnames(ot))
+  colnames(ot) <- ifelse(colnames(ot) == "EL", "GR", colnames(ot))
+  
+  stopifnot(all(rownames(ot) %in% colnames(ot)))
+  ot <- ot[,order(colnames(ot))]
+  ot <- ot[order(rownames(ot)),]
+  stopifnot(rownames(ot) == colnames(ot))
+  
+  colSums(ot, na.rm = T)
+  dimnames(ot) <- list(to = rownames(ot), from = colnames(ot))
+```
+
+### Plot chord diagrams
+```{r}
+## Read translation csv
+txt <- read.csv(translation_chord.file, row.names = 1, stringsAsFactors = F)
+
+## Plot setting
+groupnamePadding <- 5
+margin  <- 53
+groupnameFontsize <- 12
+ticklabelFontsize <- 0
+showTicks <- F
+height <- 600
+
+for(lang in colnames(txt)) {
+#for(lang in "IT") {  
+  
+  chord_outgoing.file <- paste0("chordDublin_outgoing_", lang, ".html")
+  chord_incoming.file <- paste0("chordDublin_incoming_", lang, ".html")
+  
+  mat <- ot
+  pays <- rownames(mat)
+  pays[pays != "autres"] <- countryTranslation(pays[pays != "autres"], lang)[,2]
+  if(lang == 'EN') {
+    pays[pays == "United Kingdom"] <- "UK"
+  }
+  
+  pays[pays == "autres"] <- txt['otherEUcountries', lang]
+  dimnames(mat) <- list(to = pays, from = pays)
+  tooltipGroupConnector <- " &#x25B6; "
+  if(lang == 'AR') {
+    tooltipGroupConnector <- " &#x25C0; "
+    groupnameFontsize <- groupnameFontsize + 1
+  }
+  if(lang == 'JA') {
+    margin <- margin + 7
+  }
+
+  # plot chord diagram
+  chord.out <- chorddiag(t(mat), groupnamePadding = groupnamePadding, groupnameFontsize = groupnameFontsize, tooltipGroupConnector = tooltipGroupConnector,
+    groupColors = swi_rpal, margin = margin, ticklabelFontsize = ticklabelFontsize, height = height, showTicks = showTicks)
+  chord.out$sizingPolicy$browser$defaultWidth <- "100%"
+  
+  saveWidget(chord.out, file = "chordDublin_outgoing_tmp.html", selfcontained = FALSE, libdir = "js")
+  
+  swi_widget("chordDublin_outgoing_tmp.html", chord_outgoing.file,
+    h2 = txt["outgoing.title", lang],
+    descr =  txt["descr", lang],
+    h3 = "",
+    source = paste0(txt["source", lang], ": ", 
+      htmlLink("http://ec.europa.eu/eurostat/en/web/products-datasets/-/MIGR_DUBTO", txt["source.name", lang]),
+      " | ", txt["code", lang], ": ", htmlLink("https://github.com/mattflor/chorddiag", "chorddiagR")),
+      author = paste0(htmlLink("https://twitter.com/duc_qn", "Duc-Quang Nguyen"), " - swissinfo.ch"),
+      footer = paste0(txt['otherEUcountries', lang], ": ", paste(countryTranslation(iso2agg, lang)[,2], collapse =", "))
+  )
+  
+  # chord.inc <- chorddiag(mat, groupnamePadding = groupnamePadding, groupnameFontsize = groupnameFontsize,
+  # groupColors = swi_rpal, margin = margin, ticklabelFontsize = ticklabelFontsize, height = height,  showTicks = showTicks)  
+  # chord.inc$sizingPolicy$browser$defaultWidth <- "100%"
+  # saveWidget(chord.inc, file = "chordDublin_incoming_tmp.html", selfcontained = FALSE, libdir = "js")
+  # 
+  # swi_widget("chordDublin_incoming_tmp.html", chord_incoming.file,
+  # h2 = "Transferts entrants Dublin 2009-2014",
+  # h3 = "",
+  # descr = descr,
+  # source = paste0("source: ", htmlLink("http://ec.europa.eu/eurostat/en/web/products-datasets/-/MIGR_DUBTO", "Eurostat"), " | code:", htmlLink("https://github.com/mattflor/chorddiag", "chorddiagR")),
+  #   footer = footer
+  # )
+  
+}
+
+```
+## Compute incoming transfers vs requests 
+
+> From a long-term perspective, during the five-year period from 2009 to 2013, on average some 55 000 outgoing
+Dublin requests were made annually. 73 % of the outgoing requests were accepted, but only some 26 %(41) of
+the outgoing requests resulted in the physical transfer of a person from one EU+ country to another (on average,
+about 14 000 persons annually)(42). The proportion of outgoing requests corresponded on average to about 15%
+of the number of registered asylum applicants. The proportion of physical Dublin transfers to the number of
+applicants for international protection in the EU+(43) was about 4 %(44)
+
+
+```{r}
+  data <- read.csv(alldata.file, stringsAsFactors = FALSE, check.names = F)
+  data %<>% filter(time != "2008-01-01")
+  incomingT <- data %>% filter(type == "outgoing", partner != "Total") %>% group_by(partner) %>%
+    dplyr::summarise(total = sum(values, na.rm = T)) %>% ungroup()
+  
+  outD <- outgoingD %>% filter(time != "2008-01-01", time != "2014-01-01", partner == "Total") %>% 
+    select(-partner)
+  outD %>% spread(decision, values) %>% group_by(geo, iso2) -> outD
+  
+  outD <- left_join(
+    outD %>% dplyr::summarise(`Requests accepted` = sum(`Requests accepted`, na.rm = T)) %>% ungroup(),
+    outD %>% dplyr::summarise(Total = sum(Total, na.rm = T)) %>% ungroup()
+  )
+  outD$percAcc <- outD$`Requests accepted` / outD$`Total`
+  sum(outD$`Requests accepted`) / sum(outD$Total) 
+  
+  # incomingT <- data %>% filter(type == "incoming", partner == "Total") %>% group_by(geo, iso2) %>%
+  #   dplyr::summarise(total = sum(values, na.rm = T)) %>% ungroup()
+
+  incomingR  %<>% filter(time != "2008-01-01")
+  incoming <- incomingR %>%
+    group_by(iso2, geo) %>% dplyr::summarise(incomingR = sum(values, na.rm = T)) %>% ungroup()
+  
+  # Compute some statistcs
+  yearlyIncomingR <- as.data.frame(incomingR %>% filter(partner == "Total") %>% group_by(time) %>% dplyr::summarise(yearlyR = sum(values, na.rm = T)) %>% ungroup())
+  mean(yearlyIncomingR$yearlyR)
+  yearlyIncomingT <- data %>% filter(type == "outgoing", partner != "Total") %>% group_by(time) %>%
+    dplyr::summarise(yearlyT = sum(values, na.rm = T)) %>% ungroup()
+  mean(yearlyIncomingT$yearlyT)
+  
+  incoming <- incoming %>% left_join(rename(incomingT, geo = partner))
+  incoming$ratio <- incoming$total / incoming$incomingR
+  
+  library(ggplot2)
+  ggplot(data = incoming, aes(x=reorder(geo,-ratio), y = ratio)) + geom_bar(stat = "identity") +
+    theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) + 
+    ggtitle("Ratio: incoming transfers / incoming requests ")
+
+  ggplot(data = incoming, aes(x=reorder(geo,-incomingR), y = incomingR)) + geom_bar(stat = "identity") +
+    theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+    ggtitle("Incoming requests ")
+  
+  ggplot(data = incoming, aes(x=reorder(geo,-total), y = total)) + geom_bar(stat = "identity") +
+    theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+        ggtitle("Incoming transfers ")
+  
+  # export data for datawrapper
+  write.csv(incoming %>% filter(!iso2 %in% c("LI", "IS")) %>% select(-iso2), file = "output/incomingRequestTransfer_all.csv", row.names = F)
+```
+### Between 2009-2014, on average 
+
+* `r format(round(mean(yearlyIncomingR$yearlyR)))` outgoing Dublin requests were made annually
+* `r round(sum(outD[,'Requests accepted']) / sum(outD$Total) * 100)` % of outgoing requests were accepted between 2009-2013 (2014 data not complete!)
+*  only `r round(mean(yearlyIncomingT$yearlyT) / mean(yearlyIncomingR$yearlyR) * 100)` % outgoing requests resulted in the physical transfer of a person from one EU+ country to another (on average `r format(mean(yearlyIncomingT$yearlyT))` persons annually)
+* The proportion of outgoing requests corresponds to `r round((sum(yearlyIncomingR$yearlyR) / 2433135) * 100)` % of the number of registered asylum applicants in EU+ countries
