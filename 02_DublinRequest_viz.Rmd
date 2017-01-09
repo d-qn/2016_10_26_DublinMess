@@ -428,7 +428,7 @@ outR <- rbind(
   ungroup() %>%
   mutate(geo = "Tous les pays") %>% select(geo, everything())
 )
-outR$eurodacShare <- outR$eurodac / outR$request
+outR$eurodacShare <- 1 - (outR$eurodac / outR$request)
 
 # Test plot all acceptrance rate
 outR$time <- as.Date(outR$time)
@@ -438,7 +438,7 @@ ggplot(data = outR) + geom_area(aes(x = time, y = eurodacShare))  + facet_wrap(~
 
 ### Viz small multiples
 
-```{r viz share eurdac}
+```{r viz share eurodac}
 library(metricsgraphics)
 library(shiny)
 
@@ -488,12 +488,15 @@ lang <- 'FR'
     singleMetricGraphic(reg.df, reg, regions, height = "270px") #, axis.x = txt["axis.x", lang], axis.y = txt["axis.y", lang])
   ) 
   
+  footer <- paste0("source: ", htmlLink("http://appsso.eurostat.ec.europa.eu/nui/show.do?dataset=migr_dubredaco&lang=en", "Eurostat"),
+                  " | swissinfo.ch")
+  
   save_html(
     fluidPage(
      tags$h2("La Suisse championne de requêtes Dublin infondées"), #txt['title1', lang]),
-    div(class = "descr", "Share of Eurodac requests out of all outgoing requests, 2008-2015 and by country"), #txt['desc', lang]),
+    div(class = "descr", "Proportion des requêtes sortantes Dublin non-Eurodac par pays de 2008 à 2015"), #txt['desc', lang]),
       div(class="graphic", fluidRow(lapply(1:length(plots), function(i) column(4, plots[[i]])))),
-      div(id = "cite", HTML("Footer: sadfsadfsdaf")),
+      div(id = "cite", HTML(footer)),
       HTML(iframeresizer)  
     ), file = paste0("eurodac_share_smallMultiples_", lang,".html"), libdir = "js")
   
