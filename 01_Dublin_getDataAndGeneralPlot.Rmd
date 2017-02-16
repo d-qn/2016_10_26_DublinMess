@@ -37,7 +37,7 @@ if(downloadData) {
   # warning the data to download is very large over 1 Gb !
   getData <- function(dataID) {
   cat("\n", dataID)
-   dat <- get_eurostat(dataID, time_format = "date", cache = F)
+   dat <- get_eurostat(dataID, time_format = "date_last", cache = F)
   }
   data.dl <- lapply(tables, getData)
   
@@ -105,6 +105,7 @@ missingData <- function(df) {
 lapply(data.read, missingData)
 
 # Define time limits 
+lapply(data.read, function(ii) range(ii$time))
 time.limit <- range(data.read[[1]]$time) #as.Date(c("2009-01-01", "2014-01-01"))
 
 filterByIso2 <- function(
@@ -117,30 +118,31 @@ filterByIso2 <- function(
  }
 }
 
-data.sub <- sapply(data.read, filterByIso2)
-data.all <- sapply(data.read, function(dd) filterByIso2(dd, geo.subset = unique(data.read[[2]]$geo)))
-
 ```
 
 ## Combine datasets
 
-```{r comine datasets, echo = F, message = F}
+```{r combine datasets, echo = F, message = F}
+data.sub <- sapply(data.read, filterByIso2)
+
 # massive check!
-stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[[2]]))
-stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[[3]]))
-stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['decisionDublinIn']]) / 3)
-stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['decisionDublinOut']]) / 3)
-stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['dublinOutEurodacDecision']]) / 3)
-stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['dublinOutT']]))
-stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['dublinOutREurodac']]))
+# stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[[2]]))
+# stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[[3]]))
+# stopifnot(nrow(data.sub[[2]]) == nrow(data.sub[['decisionDublinIn']]) / 3)
+# stopifnot(nrow(data.sub[[2]]) == nrow(data.sub[['decisionDublinOut']]) / 3)
+# stopifnot(nrow(data.sub[[2]]) == nrow(data.sub[['dublinOutEurodacDecision']]) / 3)
+# stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['dublinOutT']]))
+# stopifnot(nrow(data.sub[[1]]) == nrow(data.sub[['dublinOutREurodac']]))
 
 #compute % positive decision rate
 positiveDecision <- function(dd, name = "" ) {
-  result <- dd %>% group_by(geo, time) %>%
-    summarise(rate = values[which(decision == 'ACC')] / values[which(decision == 'TOTAL')]) %>% 
-    ungroup()
+  result <- dd %>% spread(decision, values)
+  # somehow some TOTAL are NA, replaced by sum of ACC + REF
+  irow <- which(is.na(result$TOTAL))
+  result[irow, 'TOTAL'] <- result[irow, 'ACC'] + result[irow, 'REF'] 
+  result$rate <- result$ACC / result$TOTAL
   colnames(result)[which(colnames(result) == "rate")] <- name
-  result
+  result %>% select(-ACC, -REF, -TOTAL, -partner)
 }
 
 data.sub[['decisionDublinIn']] <- positiveDecision(data.sub[['decisionDublinIn']], 'incomingAccRequestRate')
@@ -181,13 +183,30 @@ names(vars) <- c(
   "% of Eurodac requests out of all outgoing requests")
 
 ```
+## PLOT
+
+### Plot total/sum over all countries
 
 ```{r plot total over all countries, message = F, warning = F, echo = F}
+data.all <- sapply(data.read, function(dd) filterByIso2(dd, geo.subset = unique(data.read[[2]]$geo)))
 
+# positiveDecision2 <- function(dd, name = "" ) {
+#   result <- dd %>% group_by(time) %>%
+#     summarise(rate = sum(values[which(decision == 'ACC')], na.rm = T) / sum(values[which(decision == 'TOTAL')], na.rm = T)) %>% 
+#     ungroup()
+#   colnames(result)[which(colnames(result) == "rate")] <- name
+#   result
+# }
+
+#compute % positive decision rate
 positiveDecision2 <- function(dd, name = "" ) {
-  result <- dd %>% group_by(time) %>%
-    summarise(rate = sum(values[which(decision == 'ACC')], na.rm = T) / sum(values[which(decision == 'TOTAL')], na.rm = T)) %>% 
-    ungroup()
+  result <- dd %>% filter(!geo %in% c("TOTAL", "EU28")) %>% spread(decision, values)
+  # somehow some TOTAL are NA, replaced by sum of ACC + REF
+  irow <- which(is.na(result$TOTAL))
+  result[irow, 'TOTAL'] <- result[irow, 'ACC'] + result[irow, 'REF'] 
+  
+  result %<>% group_by(time) %>% summarise(rate = sum(ACC)/sum(TOTAL)) %>% ungroup()
+  
   colnames(result)[which(colnames(result) == "rate")] <- name
   result
 }
@@ -222,16 +241,14 @@ myAreas <- function(dat = data, x = "time", y = "values", title = "") {
 }
 
 invisible(sapply(1:length(vars), function(i) {
-  print(myAreas(dat = data.all, y = vars[i], title = paste0(i, " - ", names(vars)[i])))} 
+  cat("\n", vars[i])
+  print(myAreas(dat = data.all , y = vars[i], title = paste0(i, " - ", names(vars)[i])))} 
 ))
 
 
 ```
 
-
-### Plot
-
-## Plot general countries' figures 
+### Plot general countries' figures 
 
 Interesting charts
 
@@ -260,10 +277,10 @@ invisible(sapply(1:length(vars), function(i) {
 ## Combine the overall total and subsets in one 
 
 ```{r combine}
-data.all$country <- data.all$geo <- "TOTAL"
-# elegant reordering of columns
-data.all %>% select(geo, everything(), country)
-
-data.merged <- rbind(data, data.all)
+# data.all$country <- data.all$geo <- "TOTAL"
+# # elegant reordering of columns
+# data.all %>% select(geo, everything(), country)
+# 
+# data.merged <- rbind(data, data.all)
 
 ```

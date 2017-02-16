@@ -1,0 +1,10 @@
+code,EN,FR,DE,IT,PT,AR,RU,ES,JA,ZH
+title,,La Suisse championne de requêtes Dublin infondées,,,,,,,,
+descr,,Proportion des requêtes sortantes Dublin non-Eurodac* par pays de 2008 à 2015,,,,,,,,
+axis.x,,année,,,,,,,,
+axis.y,,requêtes non-Eurodac,,,,,,,,
+footer,,Eurodac (European Dactyloscopy) est une base de données d'empreintes digitales de l'Union européenne ayant pour but d'identifer les demandeurs d'asile. Elle permet aux authorités de déterminer si un demandeur d'asile a déjà déposé une demande d'asile dans un autre pays membre ou a transité de manière illégale à travers d'autres pays de l'UE + AELE.,,,,,,,,
+source,Source,source,Quelle,Fonte,fonte,المصدر,Источник,Fuente,出典,来源
+source.name,Eurostat,Eurostat,Eurostat,Eurostat,Eurostat,يوروستات، المكتب الإحصائي للإتحاد الأوروبي,Евростат,Eurostat,EU統計局,欧洲统计局
+code,Code,code,Code,Codice,código,الرمز,Код,código,コード,代码
+XX,,UE + AELE,,,,,,,,
