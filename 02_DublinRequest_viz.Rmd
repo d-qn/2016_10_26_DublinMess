@@ -17,6 +17,13 @@ translation_nonEurodacShare.file <- "input/Share non-eurodac - sheet1.csv"
 total.outgoing4DW_all.file <- "input/outgoingTotal_all_DW.csv"
 total.outgoing4DW_sub.file <- "input/outgoingTotal_sub_DW.csv"
 refusalRate4DW.sub.file <- "input/refusalRate_sub_DW.csv"
+#height for interactive, in px
+height <- 470
+
+jpn.css <- '<style>body, h1, h2, h3, h4, h5, h6, .descr, #footer, #cite {font-family: Verdana, sans-serif !important;}</style>'    
+
+
+devPlot <- F
 
 library(readr)
 library(tidyr)
@@ -117,10 +124,11 @@ outr %<>% arrange(desc(iso2g))
 
 sg.labels <- data.frame(
   iso2 = c("DE", "CH", "SE", "XX"),
-  x = rep(as.Date("2015-03-27"), 4),
-  y = c(30000, 57000, 70000, 94500)
+  x = c(rep(as.Date("2015-01-27"), 3), as.Date("2010-09-27")),
+  y = c(10000, 42000, 54000, 29500)#y = c(30000, 57000, 70000, 94500)
 )
 
+sg_col <- swi_rpal# c("#8b706f", "#9d8584", "#755f5d", "#ae9b9a", "#5f4d4c", "#b7a6a5", "#544443", "#c8bbbb", "#3e3332", "#dad1d0", "#292120")
 
 for(lang in colnames(txt)) {
   ddd <- outr
@@ -133,19 +141,22 @@ for(lang in colnames(txt)) {
   #order factor 
   ddd$group <- factor(ddd$group, levels = ddd[match(ordered.l, ddd$iso2g), 'group'] %>% unlist(use.names = F))
   
+  # get the alphabetical order of the factor levels, i.e countries
+  #levels(ddd$group)
+  
   labels <- sg.labels
   labels$label <- ddd[match(as.character(labels$iso2), as.character(ddd$iso2g)), 'group'] %>% unlist %>% as.character()
   
   # PLOT streamgraph
-  sg <- streamgraph(ddd, group, values, time, right = 13, left = 50) %>% 
+  sg <- streamgraph(ddd, group, values, time, right = 13, left = 50,  bottom = 26, offset = "zero", height = height-50) %>% 
   sg_axis_x(tick_interval = 1, "year", tick_format = "%Y") %>%
-  sg_fill_brewer("PuBu") %>%
-  sg_annotate(label = labels$label[1], x = labels$x[1], y = labels$y[1], color = "grey") %>%
-  sg_annotate(label = labels$label[2], x = labels$x[2], y = labels$y[2], color = "grey") %>%
-  sg_annotate(label = labels$label[3], x = labels$x[3], y = labels$y[3], color = "grey") %>%
-  sg_annotate(label = labels$label[4], x = labels$x[4], y = labels$y[4], color = "grey")
-  sg$sizingPolicy$browser$padding <- 0
-  sg$sizingPolicy$browser$defaultWidth <- "100%"
+  sg_fill_manual(values = sg_col) %>%
+  sg_annotate(label = labels$label[1], x = labels$x[1], y = labels$y[1], color = "white") %>%
+  sg_annotate(label = labels$label[2], x = labels$x[2], y = labels$y[2], color = "white") %>%
+  sg_annotate(label = labels$label[3], x = labels$x[3], y = labels$y[3], color = "white") %>%
+  sg_annotate(label = labels$label[4], x = labels$x[4], y = labels$y[4], color = "white")
+  sg$sizingPolicy$padding <- 0
+  sg$sizingPolicy$defaultWidth <- "100%"
 
   #sg
   saveWidget(sg, file = "streamgraph_tmp.html", selfcontained = FALSE, libdir = "js")
@@ -160,12 +171,14 @@ for(lang in colnames(txt)) {
     txt["source", lang], ": ", 
     htmlLink("http://appsso.eurostat.ec.europa.eu/nui/show.do?dataset=migr_dubro&lang=en", txt["source.name", lang]),
     " | ", txt["code", lang], ": ", htmlLink("https://github.com/hrbrmstr/streamgraph", "streamgraphR"),
-    " | ", htmlLink("https://twitter.com/duc_qn", "@duc_qn"), " | swissinfo.ch")
+    " | ", 
+   # htmlLink("https://twitter.com/duc_qn", "@duc_qn"), 
+    "swissinfo.ch")
     
   save_html(
     tags$html(
      tags$head(
-       HTML(paste0("<link href='https://fonts.googleapis.com/css?family=Open+Sans+Condensed:300,700,300italic&subset=latin,cyrillic' rel='stylesheet' type='text/css'>", 
+       HTML(paste0("<link href='https://fonts.googleapis.com/css?family=Open+Sans+Condensed:300,700,300italic&subset=latin,cyrillic' rel='stylesheet' type='text/css'> <meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1'>", ifelse(lang == "JA", jpn.css, ""),
        paste0(header, collapse =""), collapse =""))),
       tags$body(
        h2(HTML(txt['title', lang])),
@@ -177,49 +190,50 @@ for(lang in colnames(txt)) {
       )), file = paste0("streamgraph_", lang, ".html"), libdir = "js"
   )
   swi_libWidget_overwrite()
-  
 }
   
 ```
 
 ### Dublin incoming requests (based on outgoing data)
 ```{r incoming request (based on outgoing data), echo = F}
-# Find the top countries/geo overall
-totInR <- inR %>% filter(!partner %in% c('EU28', 'TOTAL')) %>% group_by(partner) %>%
-  summarise(totInR = sum(incoming, na.rm = T)) %>%
-  arrange(desc(totInR))
+if(devPlot) {
+  # Find the top countries/geo overall
+  totInR <- inR %>% filter(!partner %in% c('EU28', 'TOTAL')) %>% group_by(partner) %>%
+    summarise(totInR = sum(incoming, na.rm = T)) %>%
+    arrange(desc(totInR))
   
-# merge non-frequent geos
-totInR.ptn <- totInR %>% head(10) %>% select(partner) %>% unlist(use.names = F)
-
-inR$group <- ifelse(inR$partner %in% totInR.ptn, inR$partner, "others")
-
-inr <- inR %>%
-  group_by(group, time) %>%
-  summarise(values = sum(incoming, na.rm = T)) %>%
-  ungroup()
-inr$time <- as.Date(inr$time)
-# order factor decreasing values
-ordered.l<- inr %>% group_by(group) %>% 
-  summarise(tot = sum(values)) %>% 
-  arrange(desc(tot)) %>% select(group) %>% unlist(use.names = F)
-inr$group <- factor(inr$group, levels = ordered.l)
-inr %<>% arrange(desc(group))
-
-# 1. streamgraph
-sg2 <- streamgraph(inr, group, values, time, right = 7) %>% 
-  sg_axis_x(tick_interval = 1, "year", tick_format = "%Y") %>%
-  sg_fill_brewer("Blues") 
-
+  # merge non-frequent geos
+  totInR.ptn <- totInR %>% head(10) %>% select(partner) %>% unlist(use.names = F)
+  
+  inR$group <- ifelse(inR$partner %in% totInR.ptn, inR$partner, "others")
+  
+  inr <- inR %>%
+    group_by(group, time) %>%
+    summarise(values = sum(incoming, na.rm = T)) %>%
+    ungroup()
+  inr$time <- as.Date(inr$time)
+  # order factor decreasing values
+  ordered.l<- inr %>% group_by(group) %>% 
+    summarise(tot = sum(values)) %>% 
+    arrange(desc(tot)) %>% select(group) %>% unlist(use.names = F)
+  inr$group <- factor(inr$group, levels = ordered.l)
+  inr %<>% arrange(desc(group))
+  
+  # 1. streamgraph
+  sg2 <- streamgraph(inr, group, values, time, right = 7) %>% 
+    sg_axis_x(tick_interval = 1, "year", tick_format = "%Y") %>%
+    sg_fill_brewer("Blues") 
+  
   sg2$sizingPolicy$browser$padding <- 0
   sg2$sizingPolicy$browser$defaultWidth <- "100%"
-
+  
   #chord$height <- "95%"
   saveWidget(sg2, file = "streamgraph_incoming_tmp.html", selfcontained = FALSE, libdir = "js")
   swi_libWidget_overwrite()
-sg2
-## 2. overall
-ggplot(data = inr) + geom_area(aes(time, values)) + facet_wrap(~ group)
+  sg2
+  ## 2. overall
+  ggplot(data = inr) + geom_area(aes(time, values)) + facet_wrap(~ group)
+}
 
 
 ```
@@ -297,7 +311,6 @@ margin  <- 54
 groupnameFontsize <- 13.5
 ticklabelFontsize <- 0
 showTicks <- F
-height <- 470
 
 for(lang in colnames(txt)) {
   
@@ -328,7 +341,6 @@ for(lang in colnames(txt)) {
   chord.out <- chorddiag(t(mat), groupnamePadding = groupnamePadding, groupnameFontsize = groupnameFontsize, tooltipGroupConnector = tooltipGroupConnector, 
     groupColors = swi_rpal, margin = margin, ticklabelFontsize = ticklabelFontsize, height = height, 
     showTicks = showTicks, groupThickness = 0.07)
-#  chord.out$sizingPolicy$browser$defaultWidth <- "100%"
   chord.out$sizingPolicy$defaultWidth <- "100%"
     
   saveWidget(chord.out, file = "chordDublin_outgoing_tmp.html", selfcontained = FALSE, libdir = "js")
@@ -348,11 +360,11 @@ for(lang in colnames(txt)) {
     
   footer <- paste0(txt['otherEUcountries', lang], ": ", paste(countryTranslation(iso2agg, lang)[,2], collapse =", "))
   
-mquery.css <- '<style>@media only screen and (max-width: 600px) {body {font-size: 14px;}}</style>'
+#mquery.css <- '<style>@media only screen and (max-width: 600px) {body {font-size: 14px;}}</style>'
   
   save_html(
     tags$html(
-      tags$head(HTML(paste0(paste0(header, collapse = ""), mquery.css))),
+      tags$head(HTML(paste0(paste0(header, collapse = ""),  ifelse(lang == "JA", jpn.css, "")))),
       tags$body(
         h2(HTML( txt["title", lang])),
         div(class = "descr",  HTML(paste0(txt["descr", lang], '&nbsp; &nbsp; <img src="Interactive_icon.svg.png" width="14" align="top">'))),
@@ -436,7 +448,6 @@ outD$time <- as.Date(outD$time)
 # Test plot all acceptrance rate
 ggplot(data = outD) + geom_area(aes(x = time, y = refRate))  + facet_wrap(~geo)
 
-
 # get subest data
 iso2.sub <- c('DE', 'AT', 'CH', 'SE', 'FR', 'XX')
 df.sub <- outD %>% filter(geo %in% iso2.sub) %>% select(-ACC, -REF, -TOTAL) %>%
@@ -482,15 +493,16 @@ library(shiny)
 
 iso2.sub <- c('XX', 'CH', 'DE',  'SE', 'AT', 'FR')
 regions <- iso2.sub
-names(regions) <- rep('#2b5555', length(regions))
-names(regions)[1] <- '#333366'
-names(regions)[which(regions == 'CH')] <- '#963638'
+names(regions) <- rep('#C87963', length(regions))
+names(regions)[1] <- '#2F343B'
+names(regions)[which(regions == 'CH')] <- '#71302F'
 
 # Helper
 singleMetricGraphic <- function(df, reg, regions, height = "270px", axis.x = "year", axis.y = "eurodac share") {
  # browser()
   col <- names(regions)[which(regions == reg)]
   axis.labels <- c( gsub("( |\\-)", "_", axis.x), gsub("( |\\-)", "_", axis.y))
+  axis.labels <- gsub('(\\"|\\,)', "", axis.labels)
   
   dff <- df[which(df$geo == reg),]
   colnames(dff)[which(colnames(dff) == "time")] <- axis.labels[1]
@@ -503,7 +515,7 @@ singleMetricGraphic <- function(df, reg, regions, height = "270px", axis.x = "ye
            decimals = 1,
            left = 30, right = 7, bottom = 20, top = 3, buffer = 0, linked = F, 
            title = "") %>%
-    mjs_line(area = TRUE, color = col) %>%
+    mjs_line(area = TRUE, color = col, animate_on_load = T) %>%
     mjs_axis_y(min_y = 0, max_y = max(df$eurodacShare, na.rm = T) + 0.05) %>% 
     mjs_axis_x(xax_count = 0) %>%
     mjs_labs(x_label = unique(dff$label))  
@@ -523,7 +535,7 @@ for(lang in colnames(txt)) {
   if(any(is.na(reg.df$label))) stop()
   
   plots <- lapply(iso2.sub, function(reg) 
-    singleMetricGraphic(reg.df, reg, regions, height = "270px", axis.x = txt["axis.x", lang], axis.y = txt["axis.y", lang])
+    singleMetricGraphic(reg.df, reg, regions, height = "207px", axis.x = txt["axis.x", lang], axis.y = txt["axis.y", lang])
   ) 
   
   footer <- paste0(
@@ -534,12 +546,13 @@ for(lang in colnames(txt)) {
   
   save_html(
     fluidPage(
+     tags$head(HTML(ifelse(lang == "JA", jpn.css, ""))),
      tags$h2(HTML(txt['title', lang])), 
       div(class = "descr", txt['descr', lang]),
       div(class="graphic", 
           fluidRow(class = "row no-gutters", lapply(1:length(plots), function(i) column(4, plots[[i]])))),
       div(id = "cite", HTML(footer)),
-      div(id = "footer", HTML(txt['footer', lang])),
+    #  div(id = "footer", HTML(txt['footer', lang])),
       HTML(iframeresizer)  
     ), file = paste0("nonEurodac_share_smallMultiples_", lang,".html"), libdir = "js")
   
@@ -548,7 +561,19 @@ for(lang in colnames(txt)) {
   file.copy(
     list.files(system.file("extdata", package="swiRcharts"), 'metricsgraphics_smallMultiple_xTitles.css', full.names = T),
     original, overwrite = T)  
-  
-  
 }
+```
+
+
+```{r move graphics to output, include = T}
+for(lang in colnames(txt)) {
+  files <- dir(pattern = paste0(lang, ".html$"))
+  if(length(files) > 0) {
+    destination <- paste0("output/", files)
+    file.rename(files, destination)    
+  }
+  
+  file.copy("js", "output/js", recursive = T)
+}
+
 ```
