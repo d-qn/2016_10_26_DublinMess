@@ -331,7 +331,8 @@ for(lang in colnames(txt)) {
     groupnameFontsize <- groupnameFontsize + 1
   }
   if(lang == 'JA') {
-    margin <- margin + 7
+    margin <- margin + 8.1
+    groupnameFontsize <- 11
   }
   library(chorddiag)
   
